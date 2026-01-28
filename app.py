@@ -288,6 +288,13 @@ def main():
             "Dropped tickers with missing shares_outstanding: " + ", ".join(dropped)
         )
 
+    if len(usable) < 2:
+        st.error(
+            "Not enough shares_outstanding data to build a market-cap-weighted index. "
+            "Please fill shares_outstanding in data/constituents.csv or ensure Yahoo data is available."
+        )
+        st.stop()
+
     lp_levels = build_lp_index_levels(
         price_frame=lp_close.reindex(columns=usable),
         shares_outstanding=shares,
@@ -309,7 +316,8 @@ def main():
     if company_ret is not None:
         series_list.append(company_ret)
 
-    df = pd.concat(series_list, axis=1).dropna()
+    df = pd.concat(series_list, axis=1)
+    df = df.dropna(subset=["L&P", sp_series.name])
 
     fig = go.Figure()
     fig.add_trace(
