@@ -124,6 +124,56 @@ def _extract_field(df: pd.DataFrame, tickers: list[str], field: str) -> pd.DataF
     raise ValueError(f"Field '{field}' not present in downloaded data")
 
 
+def _infer_currency(ticker: str) -> str:
+    suffix_map = {
+        ".TO": "CAD",
+        ".L": "GBP",
+        ".HE": "EUR",
+        ".VI": "EUR",
+        ".T": "JPY",
+        ".SW": "CHF",
+        ".DE": "EUR",
+        ".PA": "EUR",
+        ".MI": "EUR",
+        ".HK": "HKD",
+        ".AX": "AUD",
+        ".ST": "SEK",
+        ".OL": "NOK",
+        ".SA": "BRL",
+    }
+    for suffix, ccy in suffix_map.items():
+        if ticker.endswith(suffix):
+            return ccy
+    return "USD"
+
+
+@st.cache_data(show_spinner=False)
+def _fetch_fx_rates(currencies: list[str], start: datetime | None) -> pd.DataFrame:
+    fx_ticker_by_ccy = {
+        "EUR": "EURUSD=X",
+        "JPY": "JPYUSD=X",
+        "GBP": "GBPUSD=X",
+        "CAD": "CADUSD=X",
+        "CHF": "CHFUSD=X",
+        "AUD": "AUDUSD=X",
+        "HKD": "HKDUSD=X",
+        "SEK": "SEKUSD=X",
+        "NOK": "NOKUSD=X",
+        "BRL": "BRLUSD=X",
+    }
+
+    fx_tickers = [fx_ticker_by_ccy[c] for c in currencies if c in fx_ticker_by_ccy]
+    if not fx_tickers:
+        return pd.DataFrame()
+
+    raw = _fetch_prices(fx_tickers, start=start)
+    fx_close = _extract_field(raw, fx_tickers, "Close")
+
+    ccy_by_fx = {v: k for k, v in fx_ticker_by_ccy.items()}
+    fx_close = fx_close.rename(columns=ccy_by_fx)
+    return fx_close
+
+
 def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
@@ -199,6 +249,31 @@ def main():
     lp_close = lp_close.where(lp_close > 0)
     lp_close = lp_close.sort_index().ffill(limit=7)
 
+    currency_by_ticker = {t: _infer_currency(t) for t in lp_tickers}
+    fx_currencies = sorted({c for c in currency_by_ticker.values() if c != "USD"})
+    fx_rates = _fetch_fx_rates(fx_currencies, start=start)
+    if not fx_rates.empty:
+        fx_rates = fx_rates.reindex(lp_close.index).sort_index().ffill(limit=7)
+
+    missing_fx = []
+    lp_close_usd = lp_close.copy()
+    for ticker, ccy in currency_by_ticker.items():
+        if ccy == "USD":
+            continue
+        if ccy not in fx_rates.columns or fx_rates[ccy].dropna().empty:
+            missing_fx.append(ccy)
+            continue
+        lp_close_usd[ticker] = lp_close_usd[ticker] * fx_rates[ccy]
+
+    if missing_fx:
+        st.warning(
+            "Missing FX rates for: "
+            + ", ".join(sorted(set(missing_fx)))
+            + ". Prices for those tickers were left in local currency."
+        )
+
+    lp_close = lp_close_usd
+
     with st.spinner("Fetching shares outstanding (public data)..."):
         shares = constituents["shares_outstanding"].copy()
         missing = shares[shares.isna()].index.tolist()
@@ -273,6 +348,8 @@ def main():
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    st.caption("Non-USD tickers are converted to USD using daily FX rates.")
 
     if reconstitution != "None (static list)":
         st.info(
