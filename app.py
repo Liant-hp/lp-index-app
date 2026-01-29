@@ -178,6 +178,12 @@ def main():
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
 
+    shares_file = st.file_uploader(
+        "Optional: Upload shares_outstanding CSV",
+        type=["csv"],
+        help="CSV with columns: ticker, shares_outstanding",
+    )
+
     return_type = st.radio(
         "Return type",
         options=["Price return", "Total return (Adj Close)"],
@@ -202,6 +208,29 @@ def main():
 
     constituents = load_constituents(CONSTITUENTS_CSV)
     lp_tickers = constituents.index.tolist()
+
+    if shares_file is not None:
+        try:
+            shares_df = pd.read_csv(shares_file)
+            if "ticker" in shares_df.columns and "shares_outstanding" in shares_df.columns:
+                shares_df["ticker"] = (
+                    shares_df["ticker"].astype(str).str.strip().str.upper()
+                )
+                shares_df["shares_outstanding"] = pd.to_numeric(
+                    shares_df["shares_outstanding"], errors="coerce"
+                )
+                overrides = shares_df.dropna(subset=["ticker"]).set_index("ticker")
+                constituents.loc[
+                    constituents.index.intersection(overrides.index),
+                    "shares_outstanding",
+                ] = overrides.loc[
+                    constituents.index.intersection(overrides.index),
+                    "shares_outstanding",
+                ]
+            else:
+                st.error("Uploaded CSV must include 'ticker' and 'shares_outstanding'.")
+        except Exception:
+            st.error("Could not read the uploaded CSV.")
 
     company_ticker = None
     if show_company:
@@ -326,6 +355,7 @@ def main():
             y=df["L&P"] * 100.0,
             mode="lines",
             name="Labels & Packaging (L&P)",
+            line=dict(color="#1f77b4"),
         )
     )
     fig.add_trace(
@@ -334,6 +364,7 @@ def main():
             y=df[sp_series.name] * 100.0,
             mode="lines",
             name=sp_series.name,
+            line=dict(color="#ff7f0e"),
         )
     )
 
@@ -344,6 +375,7 @@ def main():
                 y=df[company_ticker] * 100.0,
                 mode="lines",
                 name=company_ticker,
+                line=dict(color="#d62728"),
             )
         )
 
