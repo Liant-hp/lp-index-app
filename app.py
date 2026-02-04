@@ -208,6 +208,11 @@ def main():
 
     constituents = load_constituents(CONSTITUENTS_CSV)
     lp_tickers = constituents.index.tolist()
+    name_by_ticker = constituents["name"].to_dict()
+    display_name_by_ticker = {
+        t: f"{t} ({name_by_ticker.get(t)})" if name_by_ticker.get(t) else t
+        for t in lp_tickers
+    }
 
     if shares_file is not None:
         try:
@@ -234,7 +239,12 @@ def main():
 
     company_ticker = None
     if show_company:
-        company_ticker = st.selectbox("Company", options=lp_tickers, index=0)
+        company_ticker = st.selectbox(
+            "Company",
+            options=lp_tickers,
+            index=0,
+            format_func=lambda t: display_name_by_ticker.get(t, t),
+        )
 
     if len(lp_tickers) < 2:
         st.error("Add at least 2 tickers to data/constituents.csv")
@@ -313,8 +323,10 @@ def main():
     usable = shares.dropna().index.tolist()
     dropped = sorted(set(lp_tickers) - set(usable))
     if dropped:
+        dropped_labels = [display_name_by_ticker.get(t, t) for t in dropped]
         st.warning(
-            "Dropped tickers with missing shares_outstanding: " + ", ".join(dropped)
+            "Dropped tickers with missing shares_outstanding: "
+            + ", ".join(dropped_labels)
         )
 
     if len(usable) < 2:
