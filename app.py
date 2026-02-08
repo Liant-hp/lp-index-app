@@ -302,7 +302,13 @@ def main():
         if ccy not in fx_rates.columns or fx_rates[ccy].dropna().empty:
             missing_fx.append(ccy)
             continue
-        lp_close_usd[ticker] = lp_close_usd[ticker] * fx_rates[ccy]
+        
+        # Yahoo Finance returns LSE (.L) prices in pence (GBp), but FX is in GBP.
+        factor = 1.0
+        if ticker.endswith(".L"):
+            factor = 0.01
+
+        lp_close_usd[ticker] = lp_close_usd[ticker] * factor * fx_rates[ccy]
 
     if missing_fx:
         st.warning(
