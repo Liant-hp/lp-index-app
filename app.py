@@ -27,6 +27,7 @@ RANGE_OPTIONS = {
     "6M": ("months", 6),
     "YTD": ("ytd", None),
     "1Y": ("years", 1),
+    "2Y": ("years", 2),
     "5Y": ("years", 5),
     "All": ("max", None),
 }
