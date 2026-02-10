@@ -390,7 +390,7 @@ def main():
         series_list.append(company_ret)
 
     df = pd.concat(series_list, axis=1)
-    df = df.dropna(subset=["L&P", sp_series.name])
+    df = df.dropna(subset=[index_label, sp_series.name])
 
     fig = go.Figure()
     fig.add_trace(
