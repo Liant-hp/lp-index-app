@@ -18,6 +18,7 @@ from lp_index import build_lp_index_levels, compute_normalized_returns, load_con
 
 APP_TITLE = "Labels & Packaging (L&P) vs S&P 500"
 CONSTITUENTS_CSV = Path(__file__).parent / "data" / "constituents.csv"
+CORRUGATED_CSV = Path(__file__).parent / "data" / "corrugated_constituents.csv"
 
 
 RANGE_OPTIONS = {
@@ -192,6 +193,13 @@ def main():
         index=1,
     )
 
+    universe = st.radio(
+        "Universe",
+        options=["Indigo", "Corrugated"],
+        horizontal=True,
+        index=0,
+    )
+
     reconstitution = st.selectbox(
         "Reconstitution frequency",
         options=["None (static list)", "Monthly", "Quarterly", "Annual"],
@@ -207,7 +215,23 @@ def main():
         horizontal=True,
     )
 
-    constituents = load_constituents(CONSTITUENTS_CSV)
+    base_constituents = load_constituents(CONSTITUENTS_CSV)
+    if universe == "Corrugated":
+        constituents = load_constituents(CORRUGATED_CSV)
+        constituents_source = "data/corrugated_constituents.csv"
+
+        overlap = constituents.index.intersection(base_constituents.index)
+        if not overlap.empty:
+            constituents.loc[
+                overlap,
+                ["shares_outstanding", "free_float", "capping_factor"],
+            ] = base_constituents.loc[
+                overlap,
+                ["shares_outstanding", "free_float", "capping_factor"],
+            ]
+    else:
+        constituents = base_constituents
+        constituents_source = "data/constituents.csv"
     lp_tickers = constituents.index.tolist()
     name_by_ticker = constituents["name"].to_dict()
     display_name_by_ticker = {
@@ -248,7 +272,7 @@ def main():
         )
 
     if len(lp_tickers) < 2:
-        st.error("Add at least 2 tickers to data/constituents.csv")
+        st.error(f"Add at least 2 tickers to {constituents_source}")
         st.stop()
 
     start = _start_date_for_range(range_key)
