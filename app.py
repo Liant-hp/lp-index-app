@@ -233,6 +233,7 @@ def main():
         constituents = base_constituents
         constituents_source = "data/constituents.csv"
     lp_tickers = constituents.index.tolist()
+    index_label = "Corrugated" if universe == "Corrugated" else "L&P"
     name_by_ticker = constituents["name"].to_dict()
     display_name_by_ticker = {
         t: f"{t} ({name_by_ticker.get(t)})" if name_by_ticker.get(t) else t
@@ -384,7 +385,7 @@ def main():
         company_ret = compute_normalized_returns(company_series).rename(company_ticker)
 
     # Align on common dates
-    series_list = [lp_ret.rename("L&P"), sp_ret.rename(sp_series.name)]
+    series_list = [lp_ret.rename(index_label), sp_ret.rename(sp_series.name)]
     if company_ret is not None:
         series_list.append(company_ret)
 
@@ -395,9 +396,9 @@ def main():
     fig.add_trace(
         go.Scatter(
             x=df.index,
-            y=df["L&P"] * 100.0,
+            y=df[index_label] * 100.0,
             mode="lines",
-            name="Labels & Packaging (L&P)",
+            name=index_label,
             line=dict(color="#1f77b4"),
         )
     )
