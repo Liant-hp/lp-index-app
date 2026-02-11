@@ -133,6 +133,7 @@ def _infer_currency(ticker: str) -> str:
         ".HE": "EUR",
         ".VI": "EUR",
         ".T": "JPY",
+        ".BK": "THB",
         ".SW": "CHF",
         ".DE": "EUR",
         ".PA": "EUR",
@@ -162,6 +163,7 @@ def _fetch_fx_rates(currencies: list[str], start: datetime | None) -> pd.DataFra
         "SEK": "SEKUSD=X",
         "NOK": "NOKUSD=X",
         "BRL": "BRLUSD=X",
+        "THB": "THBUSD=X",
     }
 
     fx_tickers = [fx_ticker_by_ccy[c] for c in currencies if c in fx_ticker_by_ccy]
@@ -195,7 +197,7 @@ def main():
 
     universe = st.radio(
         "Universe",
-        options=["Indigo", "Corrugated"],
+        options=["Indigo&PWP", "Corrugated"],
         horizontal=True,
         index=0,
     )
@@ -233,7 +235,7 @@ def main():
         constituents = base_constituents
         constituents_source = "data/constituents.csv"
     lp_tickers = constituents.index.tolist()
-    index_label = "Corrugated" if universe == "Corrugated" else "L&P"
+    index_label = "Corrugated" if universe == "Corrugated" else "Indigo&PWP"
     name_by_ticker = constituents["name"].to_dict()
     display_name_by_ticker = {
         t: f"{t} ({name_by_ticker.get(t)})" if name_by_ticker.get(t) else t
@@ -312,7 +314,36 @@ def main():
     # Clean and align: some tickers trade on different calendars.
     # Treat non-positive prices as missing and forward-fill short gaps.
     lp_close = lp_close.where(lp_close > 0)
-    lp_close = lp_close.sort_index().ffill(limit=7)
+    lp_close = lp_close.sort_index()
+
+    first_date = lp_close.index.min()
+    if first_date is not None:
+        first_valid_by_ticker = lp_close.apply(lambda s: s.first_valid_index())
+        late_starters = first_valid_by_ticker[
+            first_valid_by_ticker.notna() & (first_valid_by_ticker > first_date)
+        ]
+        if not late_starters.empty:
+            diagnostic_rows = []
+            for ticker, first_valid in late_starters.sort_values().items():
+                gap_days = (first_valid - first_date).days
+                diagnostic_rows.append(
+                    f"{ticker}: starts {gap_days}d after {first_date.date()}"
+                )
+            with st.expander("Data coverage diagnostics", expanded=False):
+                st.caption("Tickers with late-starting price history")
+                st.code("\n".join(diagnostic_rows))
+
+    complete_mask = lp_close.notna().all(axis=1)
+    if complete_mask.any():
+        first_complete = lp_close.index[complete_mask][0]
+        lp_close = lp_close.loc[first_complete:]
+    else:
+        st.warning(
+            "No date has complete price coverage for all tickers; "
+            "index will use available data and may show an early step."
+        )
+
+    lp_close = lp_close.ffill(limit=7)
 
     currency_by_ticker = {t: _infer_currency(t) for t in lp_tickers}
     fx_currencies = sorted({c for c in currency_by_ticker.values() if c != "USD"})
