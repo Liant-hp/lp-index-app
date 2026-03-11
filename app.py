@@ -19,6 +19,7 @@ from lp_index import build_lp_index_levels, compute_normalized_returns, load_con
 APP_TITLE = "Labels & Packaging (L&P) vs S&P 500"
 CONSTITUENTS_CSV = Path(__file__).parent / "data" / "constituents.csv"
 CORRUGATED_CSV = Path(__file__).parent / "data" / "corrugated_constituents.csv"
+CPG_CSV = Path(__file__).parent / "data" / "cpg_constituents.csv"
 
 
 RANGE_OPTIONS = {
@@ -218,43 +219,41 @@ def main():
     )
 
     base_constituents = load_constituents(CONSTITUENTS_CSV)
-    cpg_benchmarks = []
-    if universe == "CPG":
-        constituents = None
-        constituents_source = None
-        lp_tickers = []
-        index_label = "CPG"
-        display_name_by_ticker = {}
-        cpg_benchmarks = [
-            ("S&P Consumer Staples Select Sector (XLP)", "XLP"),
-            ("S&P 500 Consumer Staples (VDC proxy)", "VDC"),
-        ]
+    if universe == "Corrugated":
+        constituents = load_constituents(CORRUGATED_CSV)
+        constituents_source = "data/corrugated_constituents.csv"
+
+        overlap = constituents.index.intersection(base_constituents.index)
+        if not overlap.empty:
+            constituents.loc[
+                overlap,
+                ["shares_outstanding", "free_float", "capping_factor"],
+            ] = base_constituents.loc[
+                overlap,
+                ["shares_outstanding", "free_float", "capping_factor"],
+            ]
+    elif universe == "CPG":
+        constituents = load_constituents(CPG_CSV)
+        constituents_source = "data/cpg_constituents.csv"
     else:
-        if universe == "Corrugated":
-            constituents = load_constituents(CORRUGATED_CSV)
-            constituents_source = "data/corrugated_constituents.csv"
+        constituents = base_constituents
+        constituents_source = "data/constituents.csv"
 
-            overlap = constituents.index.intersection(base_constituents.index)
-            if not overlap.empty:
-                constituents.loc[
-                    overlap,
-                    ["shares_outstanding", "free_float", "capping_factor"],
-                ] = base_constituents.loc[
-                    overlap,
-                    ["shares_outstanding", "free_float", "capping_factor"],
-                ]
-        else:
-            constituents = base_constituents
-            constituents_source = "data/constituents.csv"
-        lp_tickers = constituents.index.tolist()
-        index_label = "Corrugated" if universe == "Corrugated" else "Indigo&PWP"
-        name_by_ticker = constituents["name"].to_dict()
-        display_name_by_ticker = {
-            t: f"{t} ({name_by_ticker.get(t)})" if name_by_ticker.get(t) else t
-            for t in lp_tickers
-        }
+    lp_tickers = constituents.index.tolist()
+    if universe == "Corrugated":
+        index_label = "Corrugated"
+    elif universe == "CPG":
+        index_label = "CPG"
+    else:
+        index_label = "Indigo&PWP"
 
-    if shares_file is not None and constituents is not None:
+    name_by_ticker = constituents["name"].to_dict()
+    display_name_by_ticker = {
+        t: f"{t} ({name_by_ticker.get(t)})" if name_by_ticker.get(t) else t
+        for t in lp_tickers
+    }
+
+    if shares_file is not None:
         try:
             shares_df = pd.read_csv(shares_file)
             if "ticker" in shares_df.columns and "shares_outstanding" in shares_df.columns:
@@ -286,7 +285,7 @@ def main():
             format_func=lambda t: display_name_by_ticker.get(t, t),
         )
 
-    if constituents is not None and len(lp_tickers) < 2:
+    if len(lp_tickers) < 2:
         st.error(f"Add at least 2 tickers to {constituents_source}")
         st.stop()
 
@@ -295,199 +294,187 @@ def main():
     use_total_return = return_type == "Total return (Adj Close)"
     price_field = "Adj Close" if use_total_return else "Close"
 
+    sp_tickers = ["^GSPC"]
+    if use_total_return:
+        sp_tickers = ["^SP500TR", "^GSPC"]
+
+    extra_tickers = []
     if universe == "CPG":
-        benchmark_tickers = sorted({t for _, t in cpg_benchmarks})
-        with st.spinner("Downloading market data..."):
-            prices_raw = _fetch_prices(benchmark_tickers, start=start)
+        extra_tickers = ["XLP"]
 
-        benchmark_close = _extract_field(prices_raw, benchmark_tickers, price_field)
-        benchmark_close = benchmark_close.where(benchmark_close > 0).sort_index()
-        benchmark_close = benchmark_close.ffill(limit=7)
+    with st.spinner("Downloading market data..."):
+        prices_raw = _fetch_prices(sp_tickers + lp_tickers + extra_tickers, start=start)
+
+    sp_label = "S&P 500"
+    if use_total_return:
+        sp_label = "S&P 500 TR"
+
+    sp_series = None
+    if use_total_return:
+        try:
+            sp_tr = _extract_field(prices_raw, ["^SP500TR"], price_field)["^SP500TR"]
+            if sp_tr.notna().any():
+                sp_series = sp_tr.rename(sp_label)
+        except Exception:
+            sp_series = None
+
+    if sp_series is None:
+        if use_total_return:
+            st.warning("S&P 500 TR data not available; falling back to ^GSPC.")
+        sp_series = _extract_field(prices_raw, ["^GSPC"], price_field)["^GSPC"].rename(
+            "S&P 500"
+        )
+
+    lp_close = _extract_field(prices_raw, lp_tickers, price_field)
+    # Clean and align: some tickers trade on different calendars.
+    # Treat non-positive prices as missing and forward-fill short gaps.
+    lp_close = lp_close.where(lp_close > 0)
+    lp_close = lp_close.sort_index()
+
+    first_date = lp_close.index.min()
+    if first_date is not None:
+        first_valid_by_ticker = lp_close.apply(lambda s: s.first_valid_index())
+        late_starters = first_valid_by_ticker[
+            first_valid_by_ticker.notna() & (first_valid_by_ticker > first_date)
+        ]
+        if not late_starters.empty:
+            diagnostic_rows = []
+            for ticker, first_valid in late_starters.sort_values().items():
+                gap_days = (first_valid - first_date).days
+                diagnostic_rows.append(
+                    f"{ticker}: starts {gap_days}d after {first_date.date()}"
+                )
+            with st.expander("Data coverage diagnostics", expanded=False):
+                st.caption("Tickers with late-starting price history")
+                st.code("\n".join(diagnostic_rows))
+
+    complete_mask = lp_close.notna().all(axis=1)
+    if complete_mask.any():
+        first_complete = lp_close.index[complete_mask][0]
+        lp_close = lp_close.loc[first_complete:]
     else:
-        sp_tickers = ["^GSPC"]
-        if use_total_return:
-            sp_tickers = ["^SP500TR", "^GSPC"]
+        st.warning(
+            "No date has complete price coverage for all tickers; "
+            "index will use available data and may show an early step."
+        )
 
-        with st.spinner("Downloading market data..."):
-            prices_raw = _fetch_prices(sp_tickers + lp_tickers, start=start)
+    lp_close = lp_close.ffill(limit=7)
 
-        sp_label = "S&P 500"
-        if use_total_return:
-            sp_label = "S&P 500 TR"
+    currency_by_ticker = {t: _infer_currency(t) for t in lp_tickers}
+    fx_currencies = sorted({c for c in currency_by_ticker.values() if c != "USD"})
+    fx_rates = _fetch_fx_rates(fx_currencies, start=start)
+    if not fx_rates.empty:
+        fx_rates = fx_rates.reindex(lp_close.index).sort_index().ffill(limit=7)
 
-        sp_series = None
-        if use_total_return:
-            try:
-                sp_tr = _extract_field(prices_raw, ["^SP500TR"], price_field)["^SP500TR"]
-                if sp_tr.notna().any():
-                    sp_series = sp_tr.rename(sp_label)
-            except Exception:
-                sp_series = None
+    missing_fx = []
+    lp_close_usd = lp_close.copy()
+    for ticker, ccy in currency_by_ticker.items():
+        if ccy == "USD":
+            continue
+        if ccy not in fx_rates.columns or fx_rates[ccy].dropna().empty:
+            missing_fx.append(ccy)
+            continue
 
-        if sp_series is None:
-            if use_total_return:
-                st.warning("S&P 500 TR data not available; falling back to ^GSPC.")
-            sp_series = _extract_field(prices_raw, ["^GSPC"], price_field)["^GSPC"].rename(
-                "S&P 500"
-            )
+        # Yahoo Finance returns LSE (.L) prices in pence (GBp), but FX is in GBP.
+        factor = 1.0
+        if ticker.endswith(".L"):
+            factor = 0.01
 
-        lp_close = _extract_field(prices_raw, lp_tickers, price_field)
-    if universe != "CPG":
-        # Clean and align: some tickers trade on different calendars.
-        # Treat non-positive prices as missing and forward-fill short gaps.
-        lp_close = lp_close.where(lp_close > 0)
-        lp_close = lp_close.sort_index()
+        lp_close_usd[ticker] = lp_close_usd[ticker] * factor * fx_rates[ccy]
 
-        first_date = lp_close.index.min()
-        if first_date is not None:
-            first_valid_by_ticker = lp_close.apply(lambda s: s.first_valid_index())
-            late_starters = first_valid_by_ticker[
-                first_valid_by_ticker.notna() & (first_valid_by_ticker > first_date)
-            ]
-            if not late_starters.empty:
-                diagnostic_rows = []
-                for ticker, first_valid in late_starters.sort_values().items():
-                    gap_days = (first_valid - first_date).days
-                    diagnostic_rows.append(
-                        f"{ticker}: starts {gap_days}d after {first_date.date()}"
-                    )
-                with st.expander("Data coverage diagnostics", expanded=False):
-                    st.caption("Tickers with late-starting price history")
-                    st.code("\n".join(diagnostic_rows))
+    if missing_fx:
+        st.warning(
+            "Missing FX rates for: "
+            + ", ".join(sorted(set(missing_fx)))
+            + ". Prices for those tickers were left in local currency."
+        )
 
-        complete_mask = lp_close.notna().all(axis=1)
-        if complete_mask.any():
-            first_complete = lp_close.index[complete_mask][0]
-            lp_close = lp_close.loc[first_complete:]
-        else:
-            st.warning(
-                "No date has complete price coverage for all tickers; "
-                "index will use available data and may show an early step."
-            )
+    lp_close = lp_close_usd
 
-        lp_close = lp_close.ffill(limit=7)
+    with st.spinner("Fetching shares outstanding (public data)..."):
+        shares = constituents["shares_outstanding"].copy()
+        missing = shares[shares.isna()].index.tolist()
+        if missing:
+            fetched = _fetch_shares_outstanding(missing)
+            shares.loc[missing] = fetched
 
-        currency_by_ticker = {t: _infer_currency(t) for t in lp_tickers}
-        fx_currencies = sorted({c for c in currency_by_ticker.values() if c != "USD"})
-        fx_rates = _fetch_fx_rates(fx_currencies, start=start)
-        if not fx_rates.empty:
-            fx_rates = fx_rates.reindex(lp_close.index).sort_index().ffill(limit=7)
+    usable = shares.dropna().index.tolist()
+    dropped = sorted(set(lp_tickers) - set(usable))
+    if dropped:
+        dropped_labels = [display_name_by_ticker.get(t, t) for t in dropped]
+        st.warning(
+            "Dropped tickers with missing shares_outstanding: "
+            + ", ".join(dropped_labels)
+        )
 
-        missing_fx = []
-        lp_close_usd = lp_close.copy()
-        for ticker, ccy in currency_by_ticker.items():
-            if ccy == "USD":
-                continue
-            if ccy not in fx_rates.columns or fx_rates[ccy].dropna().empty:
-                missing_fx.append(ccy)
-                continue
+    if len(usable) < 2:
+        st.error(
+            "Not enough shares_outstanding data to build a market-cap-weighted index. "
+            "Please fill shares_outstanding in data/constituents.csv or ensure Yahoo data is available."
+        )
+        st.stop()
 
-            # Yahoo Finance returns LSE (.L) prices in pence (GBp), but FX is in GBP.
-            factor = 1.0
-            if ticker.endswith(".L"):
-                factor = 0.01
+    lp_levels = build_lp_index_levels(
+        price_frame=lp_close.reindex(columns=usable),
+        shares_outstanding=shares,
+        free_float=constituents["free_float"],
+        capping_factor=constituents["capping_factor"],
+        base_value=1000.0,
+    )
 
-            lp_close_usd[ticker] = lp_close_usd[ticker] * factor * fx_rates[ccy]
-
-        if missing_fx:
-            st.warning(
-                "Missing FX rates for: "
-                + ", ".join(sorted(set(missing_fx)))
-                + ". Prices for those tickers were left in local currency."
-            )
-
-        lp_close = lp_close_usd
+    sp_ret = compute_normalized_returns(sp_series)
+    lp_ret = compute_normalized_returns(lp_levels)
 
     company_ret = None
+    if company_ticker:
+        company_series = lp_close[company_ticker]
+        company_ret = compute_normalized_returns(company_series).rename(company_ticker)
+
+    # Align on common dates
+    series_list = [lp_ret.rename(index_label), sp_ret.rename(sp_series.name)]
     if universe == "CPG":
-        series_list = []
-        for label, ticker in cpg_benchmarks:
-            if ticker not in benchmark_close.columns:
-                continue
-            series_list.append(
-                compute_normalized_returns(benchmark_close[ticker]).rename(label)
+        try:
+            xlp_series = _extract_field(prices_raw, ["XLP"], price_field)["XLP"]
+            xlp_ret = compute_normalized_returns(xlp_series).rename(
+                "S&P Consumer Staples Select Sector (XLP)"
             )
+            series_list.append(xlp_ret)
+        except Exception:
+            st.warning("XLP data not available for CPG benchmarks.")
 
-        df = pd.concat(series_list, axis=1)
-        if df.empty:
-            st.error("No benchmark data available for CPG.")
-            st.stop()
-    else:
-        with st.spinner("Fetching shares outstanding (public data)..."):
-            shares = constituents["shares_outstanding"].copy()
-            missing = shares[shares.isna()].index.tolist()
-            if missing:
-                fetched = _fetch_shares_outstanding(missing)
-                shares.loc[missing] = fetched
+    if company_ret is not None:
+        series_list.append(company_ret)
 
-        usable = shares.dropna().index.tolist()
-        dropped = sorted(set(lp_tickers) - set(usable))
-        if dropped:
-            dropped_labels = [display_name_by_ticker.get(t, t) for t in dropped]
-            st.warning(
-                "Dropped tickers with missing shares_outstanding: "
-                + ", ".join(dropped_labels)
-            )
-
-        if len(usable) < 2:
-            st.error(
-                "Not enough shares_outstanding data to build a market-cap-weighted index. "
-                "Please fill shares_outstanding in data/constituents.csv or ensure Yahoo data is available."
-            )
-            st.stop()
-
-        lp_levels = build_lp_index_levels(
-            price_frame=lp_close.reindex(columns=usable),
-            shares_outstanding=shares,
-            free_float=constituents["free_float"],
-            capping_factor=constituents["capping_factor"],
-            base_value=1000.0,
-        )
-
-        sp_ret = compute_normalized_returns(sp_series)
-        lp_ret = compute_normalized_returns(lp_levels)
-
-        company_ret = None
-        if company_ticker:
-            company_series = lp_close[company_ticker]
-            company_ret = compute_normalized_returns(company_series).rename(company_ticker)
-
-        # Align on common dates
-        series_list = [lp_ret.rename(index_label), sp_ret.rename(sp_series.name)]
-        if company_ret is not None:
-            series_list.append(company_ret)
-
-        df = pd.concat(series_list, axis=1)
-        df = df.dropna(subset=[index_label, sp_series.name])
+    df = pd.concat(series_list, axis=1)
+    df = df.dropna(subset=[index_label, sp_series.name])
 
     fig = go.Figure()
-    if universe == "CPG":
-        for col in df.columns:
-            fig.add_trace(
-                go.Scatter(
-                    x=df.index,
-                    y=df[col] * 100.0,
-                    mode="lines",
-                    name=col,
-                )
-            )
-    else:
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df[index_label] * 100.0,
-                mode="lines",
-                name=index_label,
-                line=dict(color="#1f77b4"),
-            )
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df[index_label] * 100.0,
+            mode="lines",
+            name=index_label,
+            line=dict(color="#1f77b4"),
         )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df[sp_series.name] * 100.0,
+            mode="lines",
+            name=sp_series.name,
+            line=dict(color="#ff7f0e"),
+        )
+    )
+
+    if universe == "CPG" and "S&P Consumer Staples Select Sector (XLP)" in df.columns:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df[sp_series.name] * 100.0,
+                y=df["S&P Consumer Staples Select Sector (XLP)"] * 100.0,
                 mode="lines",
-                name=sp_series.name,
-                line=dict(color="#ff7f0e"),
+                name="S&P Consumer Staples Select Sector (XLP)",
             )
         )
 
