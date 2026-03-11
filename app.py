@@ -443,8 +443,8 @@ def main():
             )
 
     # Align on common dates
-    series_list = [lp_ret.rename(index_label), sp_ret.rename(sp_series.name)]
     if universe == "CPG":
+        series_list = [lp_ret.rename(index_label)]
         try:
             xlp_series = _extract_field(prices_raw, ["XLP"], price_field)["XLP"]
             xlp_ret = compute_normalized_returns(xlp_series).rename(
@@ -453,12 +453,17 @@ def main():
             series_list.append(xlp_ret)
         except Exception:
             st.warning("XLP data not available for CPG benchmarks.")
+    else:
+        series_list = [lp_ret.rename(index_label), sp_ret.rename(sp_series.name)]
 
     if company_rets:
         series_list.extend(company_rets)
 
     df = pd.concat(series_list, axis=1)
-    df = df.dropna(subset=[index_label, sp_series.name])
+    if universe == "CPG":
+        df = df.dropna(subset=[index_label])
+    else:
+        df = df.dropna(subset=[index_label, sp_series.name])
 
     fig = go.Figure()
     fig.add_trace(
@@ -470,15 +475,16 @@ def main():
             line=dict(color="#1f77b4"),
         )
     )
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df[sp_series.name] * 100.0,
-            mode="lines",
-            name=sp_series.name,
-            line=dict(color="#ff7f0e"),
+    if universe != "CPG":
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df[sp_series.name] * 100.0,
+                mode="lines",
+                name=sp_series.name,
+                line=dict(color="#ff7f0e"),
+            )
         )
-    )
 
     if universe == "CPG" and "S&P Consumer Staples Select Sector (XLP)" in df.columns:
         fig.add_trace(
