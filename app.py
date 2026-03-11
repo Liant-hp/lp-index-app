@@ -227,7 +227,7 @@ def main():
         display_name_by_ticker = {}
         cpg_benchmarks = [
             ("S&P Consumer Staples Select Sector (XLP)", "XLP"),
-            ("S&P 500 Consumer Staples (XLP proxy)", "XLP"),
+            ("S&P 500 Consumer Staples (VDC proxy)", "VDC"),
         ]
     else:
         if universe == "Corrugated":
