@@ -332,41 +332,41 @@ def main():
             )
 
         lp_close = _extract_field(prices_raw, lp_tickers, price_field)
-    # Clean and align: some tickers trade on different calendars.
-    # Treat non-positive prices as missing and forward-fill short gaps.
-    lp_close = lp_close.where(lp_close > 0)
-    lp_close = lp_close.sort_index()
-
-    first_date = lp_close.index.min()
-    if first_date is not None:
-        first_valid_by_ticker = lp_close.apply(lambda s: s.first_valid_index())
-        late_starters = first_valid_by_ticker[
-            first_valid_by_ticker.notna() & (first_valid_by_ticker > first_date)
-        ]
-        if not late_starters.empty:
-            diagnostic_rows = []
-            for ticker, first_valid in late_starters.sort_values().items():
-                gap_days = (first_valid - first_date).days
-                diagnostic_rows.append(
-                    f"{ticker}: starts {gap_days}d after {first_date.date()}"
-                )
-            with st.expander("Data coverage diagnostics", expanded=False):
-                st.caption("Tickers with late-starting price history")
-                st.code("\n".join(diagnostic_rows))
-
-    complete_mask = lp_close.notna().all(axis=1)
-    if complete_mask.any():
-        first_complete = lp_close.index[complete_mask][0]
-        lp_close = lp_close.loc[first_complete:]
-    else:
-        st.warning(
-            "No date has complete price coverage for all tickers; "
-            "index will use available data and may show an early step."
-        )
-
-    lp_close = lp_close.ffill(limit=7)
-
     if universe != "CPG":
+        # Clean and align: some tickers trade on different calendars.
+        # Treat non-positive prices as missing and forward-fill short gaps.
+        lp_close = lp_close.where(lp_close > 0)
+        lp_close = lp_close.sort_index()
+
+        first_date = lp_close.index.min()
+        if first_date is not None:
+            first_valid_by_ticker = lp_close.apply(lambda s: s.first_valid_index())
+            late_starters = first_valid_by_ticker[
+                first_valid_by_ticker.notna() & (first_valid_by_ticker > first_date)
+            ]
+            if not late_starters.empty:
+                diagnostic_rows = []
+                for ticker, first_valid in late_starters.sort_values().items():
+                    gap_days = (first_valid - first_date).days
+                    diagnostic_rows.append(
+                        f"{ticker}: starts {gap_days}d after {first_date.date()}"
+                    )
+                with st.expander("Data coverage diagnostics", expanded=False):
+                    st.caption("Tickers with late-starting price history")
+                    st.code("\n".join(diagnostic_rows))
+
+        complete_mask = lp_close.notna().all(axis=1)
+        if complete_mask.any():
+            first_complete = lp_close.index[complete_mask][0]
+            lp_close = lp_close.loc[first_complete:]
+        else:
+            st.warning(
+                "No date has complete price coverage for all tickers; "
+                "index will use available data and may show an early step."
+            )
+
+        lp_close = lp_close.ffill(limit=7)
+
         currency_by_ticker = {t: _infer_currency(t) for t in lp_tickers}
         fx_currencies = sorted({c for c in currency_by_ticker.values() if c != "USD"})
         fx_rates = _fetch_fx_rates(fx_currencies, start=start)
@@ -398,6 +398,7 @@ def main():
 
         lp_close = lp_close_usd
 
+    company_ret = None
     if universe == "CPG":
         series_list = []
         for label, ticker in cpg_benchmarks:
