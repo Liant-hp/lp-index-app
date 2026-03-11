@@ -276,14 +276,23 @@ def main():
         except Exception:
             st.error("Could not read the uploaded CSV.")
 
-    company_ticker = None
+    company_tickers = []
     if show_company and lp_tickers:
-        company_ticker = st.selectbox(
-            "Company",
-            options=lp_tickers,
-            index=0,
-            format_func=lambda t: display_name_by_ticker.get(t, t),
-        )
+        if universe == "CPG":
+            company_tickers = st.multiselect(
+                "Companies",
+                options=lp_tickers,
+                format_func=lambda t: display_name_by_ticker.get(t, t),
+            )
+        else:
+            company_tickers = [
+                st.selectbox(
+                    "Company",
+                    options=lp_tickers,
+                    index=0,
+                    format_func=lambda t: display_name_by_ticker.get(t, t),
+                )
+            ]
 
     if len(lp_tickers) < 2:
         st.error(f"Add at least 2 tickers to {constituents_source}")
@@ -295,7 +304,7 @@ def main():
     price_field = "Adj Close" if use_total_return else "Close"
 
     sp_tickers = ["^GSPC"]
-    if use_total_return:
+    if use_total_return and universe != "CPG":
         sp_tickers = ["^SP500TR", "^GSPC"]
 
     extra_tickers = []
@@ -306,11 +315,11 @@ def main():
         prices_raw = _fetch_prices(sp_tickers + lp_tickers + extra_tickers, start=start)
 
     sp_label = "S&P 500"
-    if use_total_return:
+    if use_total_return and universe != "CPG":
         sp_label = "S&P 500 TR"
 
     sp_series = None
-    if use_total_return:
+    if use_total_return and universe != "CPG":
         try:
             sp_tr = _extract_field(prices_raw, ["^SP500TR"], price_field)["^SP500TR"]
             if sp_tr.notna().any():
@@ -319,7 +328,7 @@ def main():
             sp_series = None
 
     if sp_series is None:
-        if use_total_return:
+        if use_total_return and universe != "CPG":
             st.warning("S&P 500 TR data not available; falling back to ^GSPC.")
         sp_series = _extract_field(prices_raw, ["^GSPC"], price_field)["^GSPC"].rename(
             "S&P 500"
@@ -425,10 +434,13 @@ def main():
     sp_ret = compute_normalized_returns(sp_series)
     lp_ret = compute_normalized_returns(lp_levels)
 
-    company_ret = None
-    if company_ticker:
-        company_series = lp_close[company_ticker]
-        company_ret = compute_normalized_returns(company_series).rename(company_ticker)
+    company_rets = []
+    for ticker in company_tickers:
+        if ticker in lp_close.columns:
+            company_series = lp_close[ticker]
+            company_rets.append(
+                compute_normalized_returns(company_series).rename(ticker)
+            )
 
     # Align on common dates
     series_list = [lp_ret.rename(index_label), sp_ret.rename(sp_series.name)]
@@ -442,8 +454,8 @@ def main():
         except Exception:
             st.warning("XLP data not available for CPG benchmarks.")
 
-    if company_ret is not None:
-        series_list.append(company_ret)
+    if company_rets:
+        series_list.extend(company_rets)
 
     df = pd.concat(series_list, axis=1)
     df = df.dropna(subset=[index_label, sp_series.name])
@@ -478,16 +490,17 @@ def main():
             )
         )
 
-    if company_ret is not None:
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df[company_ticker] * 100.0,
-                mode="lines",
-                name=company_ticker,
-                line=dict(color="#d62728"),
+    for ticker in company_tickers:
+        if ticker in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=df.index,
+                    y=df[ticker] * 100.0,
+                    mode="lines",
+                    name=ticker,
+                    line=dict(color="#d62728"),
+                )
             )
-        )
 
     fig.update_layout(
         height=520,
