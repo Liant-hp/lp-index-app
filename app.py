@@ -198,7 +198,7 @@ def main():
 
     universe = st.radio(
         "Universe",
-        options=["Indigo&PWP", "Corrugated", "CPG"],
+        options=["Labels & Packaging", "Corrugated", "CPG"],
         horizontal=True,
         index=0,
     )
@@ -245,7 +245,7 @@ def main():
     elif universe == "CPG":
         index_label = "CPG"
     else:
-        index_label = "Indigo&PWP"
+        index_label = "Labels & Packaging"
 
     name_by_ticker = constituents["name"].to_dict()
     display_name_by_ticker = {
