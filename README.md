@@ -1,11 +1,12 @@
 # Labels & Packaging Index Explorer
 
-This app charts a custom **L&P** (Labels & Packaging) index, built from a list of public companies, with an optional `XLP` benchmark overlay.
+This app charts a custom **L&P** (Labels & Packaging) index, built from a list of public companies, against the **S&P 500**, with an optional `XLP` overlay for the Labels & Packaging universe.
 
 ## What you get
 
 - A 1Y-style chart (with range buttons) showing **% change** for:
   - **L&P** (your custom basket)
+  - **S&P 500**
   - **XLP** (optional checkbox overlay for Labels & Packaging)
 
 ## How the L&P index is calculated (S&P-style)
@@ -53,7 +54,7 @@ To build your “top 50 Labels & Packaging” basket precisely, please confirm:
 1) **Final list of 50 tickers** (and their primary listing). Some names you mentioned (e.g. CCL) may be on non-US exchanges or OTC symbols.
 2) Do you want **price return** or **total return**? The app now has a toggle:
   - **Price return** uses `Close` for all series.
-  - **Total return** uses `Adj Close` for L&P and `XLP` when selected.
+  - **Total return** uses `Adj Close` for L&P and `XLP` when selected, and tries `^SP500TR` for the S&P 500 (falling back to `^GSPC` if unavailable).
 3) Rebalancing rules:
    - “Top 50” as of what date?
    - How often do you reconstitute/rebalance (monthly/quarterly/annual)?

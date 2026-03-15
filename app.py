@@ -296,12 +296,36 @@ def main():
     use_total_return = return_type == "Total return (Adj Close)"
     price_field = "Adj Close" if use_total_return else "Close"
 
+    sp_tickers = ["^GSPC"]
+    if use_total_return:
+        sp_tickers = ["^SP500TR", "^GSPC"]
+
     extra_tickers = []
     if universe == "Labels & Packaging" and show_xlp:
         extra_tickers = ["XLP"]
 
     with st.spinner("Downloading market data..."):
-        prices_raw = _fetch_prices(lp_tickers + extra_tickers, start=start)
+        prices_raw = _fetch_prices(sp_tickers + lp_tickers + extra_tickers, start=start)
+
+    sp_label = "S&P 500"
+    if use_total_return:
+        sp_label = "S&P 500 TR"
+
+    sp_series = None
+    if use_total_return:
+        try:
+            sp_tr = _extract_field(prices_raw, ["^SP500TR"], price_field)["^SP500TR"]
+            if sp_tr.notna().any():
+                sp_series = sp_tr.rename(sp_label)
+        except Exception:
+            sp_series = None
+
+    if sp_series is None:
+        if use_total_return:
+            st.warning("S&P 500 TR data not available; falling back to ^GSPC.")
+        sp_series = _extract_field(prices_raw, ["^GSPC"], price_field)["^GSPC"].rename(
+            "S&P 500"
+        )
 
     lp_close = _extract_field(prices_raw, lp_tickers, price_field)
     # Clean and align: some tickers trade on different calendars.
@@ -400,6 +424,7 @@ def main():
         base_value=1000.0,
     )
 
+    sp_ret = compute_normalized_returns(sp_series)
     lp_ret = compute_normalized_returns(lp_levels)
 
     xlp_ret = None
@@ -418,7 +443,7 @@ def main():
                 compute_normalized_returns(company_series).rename(ticker)
             )
 
-    series_list = [lp_ret.rename(index_label)]
+    series_list = [lp_ret.rename(index_label), sp_ret.rename(sp_series.name)]
 
     if xlp_ret is not None:
         series_list.append(xlp_ret)
@@ -427,7 +452,7 @@ def main():
         series_list.extend(company_rets)
 
     df = pd.concat(series_list, axis=1)
-    dropna_subset = [index_label]
+    dropna_subset = [index_label, sp_series.name]
     if xlp_ret is not None:
         dropna_subset.append("XLP")
     df = df.dropna(subset=dropna_subset)
@@ -442,6 +467,15 @@ def main():
             line=dict(color="#1f77b4"),
         )
     )
+    fig.add_trace(
+        go.Scatter(
+            x=df.index,
+            y=df[sp_series.name] * 100.0,
+            mode="lines",
+            name=sp_series.name,
+            line=dict(color="#ff7f0e"),
+        )
+    )
     if "XLP" in df.columns:
         fig.add_trace(
             go.Scatter(
@@ -449,7 +483,7 @@ def main():
                 y=df["XLP"] * 100.0,
                 mode="lines",
                 name="XLP",
-                line=dict(color="#ff7f0e"),
+                line=dict(color="#2ca02c"),
             )
         )
 
