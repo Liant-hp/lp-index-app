@@ -16,10 +16,9 @@ if str(_SRC_DIR) not in sys.path:
 from lp_index import build_lp_index_levels, compute_normalized_returns, load_constituents
 
 
-APP_TITLE = "Labels & Packaging (L&P) vs S&P 500"
+APP_TITLE = "Labels & Packaging Index Explorer"
 CONSTITUENTS_CSV = Path(__file__).parent / "data" / "constituents.csv"
 CORRUGATED_CSV = Path(__file__).parent / "data" / "corrugated_constituents.csv"
-CPG_CSV = Path(__file__).parent / "data" / "cpg_constituents.csv"
 
 
 RANGE_OPTIONS = {
@@ -198,9 +197,15 @@ def main():
 
     universe = st.radio(
         "Universe",
-        options=["Labels & Packaging", "Corrugated", "CPG"],
+        options=["Labels & Packaging", "Corrugated"],
         horizontal=True,
         index=0,
+    )
+
+    show_xlp = st.checkbox(
+        "Add XLP benchmark",
+        value=False,
+        disabled=universe != "Labels & Packaging",
     )
 
     reconstitution = st.selectbox(
@@ -232,9 +237,6 @@ def main():
                 overlap,
                 ["shares_outstanding", "free_float", "capping_factor"],
             ]
-    elif universe == "CPG":
-        constituents = load_constituents(CPG_CSV)
-        constituents_source = "data/cpg_constituents.csv"
     else:
         constituents = base_constituents
         constituents_source = "data/constituents.csv"
@@ -242,8 +244,6 @@ def main():
     lp_tickers = constituents.index.tolist()
     if universe == "Corrugated":
         index_label = "Corrugated"
-    elif universe == "CPG":
-        index_label = "CPG"
     else:
         index_label = "Labels & Packaging"
 
@@ -278,21 +278,14 @@ def main():
 
     company_tickers = []
     if show_company and lp_tickers:
-        if universe == "CPG":
-            company_tickers = st.multiselect(
-                "Companies",
+        company_tickers = [
+            st.selectbox(
+                "Company",
                 options=lp_tickers,
+                index=0,
                 format_func=lambda t: display_name_by_ticker.get(t, t),
             )
-        else:
-            company_tickers = [
-                st.selectbox(
-                    "Company",
-                    options=lp_tickers,
-                    index=0,
-                    format_func=lambda t: display_name_by_ticker.get(t, t),
-                )
-            ]
+        ]
 
     if len(lp_tickers) < 2:
         st.error(f"Add at least 2 tickers to {constituents_source}")
@@ -303,36 +296,12 @@ def main():
     use_total_return = return_type == "Total return (Adj Close)"
     price_field = "Adj Close" if use_total_return else "Close"
 
-    sp_tickers = ["^GSPC"]
-    if use_total_return and universe != "CPG":
-        sp_tickers = ["^SP500TR", "^GSPC"]
-
     extra_tickers = []
-    if universe == "CPG":
+    if universe == "Labels & Packaging" and show_xlp:
         extra_tickers = ["XLP"]
 
     with st.spinner("Downloading market data..."):
-        prices_raw = _fetch_prices(sp_tickers + lp_tickers + extra_tickers, start=start)
-
-    sp_label = "S&P 500"
-    if use_total_return and universe != "CPG":
-        sp_label = "S&P 500 TR"
-
-    sp_series = None
-    if use_total_return and universe != "CPG":
-        try:
-            sp_tr = _extract_field(prices_raw, ["^SP500TR"], price_field)["^SP500TR"]
-            if sp_tr.notna().any():
-                sp_series = sp_tr.rename(sp_label)
-        except Exception:
-            sp_series = None
-
-    if sp_series is None:
-        if use_total_return and universe != "CPG":
-            st.warning("S&P 500 TR data not available; falling back to ^GSPC.")
-        sp_series = _extract_field(prices_raw, ["^GSPC"], price_field)["^GSPC"].rename(
-            "S&P 500"
-        )
+        prices_raw = _fetch_prices(lp_tickers + extra_tickers, start=start)
 
     lp_close = _extract_field(prices_raw, lp_tickers, price_field)
     # Clean and align: some tickers trade on different calendars.
@@ -431,8 +400,15 @@ def main():
         base_value=1000.0,
     )
 
-    sp_ret = compute_normalized_returns(sp_series)
     lp_ret = compute_normalized_returns(lp_levels)
+
+    xlp_ret = None
+    if universe == "Labels & Packaging" and show_xlp:
+        try:
+            xlp_series = _extract_field(prices_raw, ["XLP"], price_field)["XLP"]
+            xlp_ret = compute_normalized_returns(xlp_series).rename("XLP")
+        except Exception:
+            st.warning("XLP data not available.")
 
     company_rets = []
     for ticker in company_tickers:
@@ -442,28 +418,19 @@ def main():
                 compute_normalized_returns(company_series).rename(ticker)
             )
 
-    # Align on common dates
-    if universe == "CPG":
-        series_list = [lp_ret.rename(index_label)]
-        try:
-            xlp_series = _extract_field(prices_raw, ["XLP"], price_field)["XLP"]
-            xlp_ret = compute_normalized_returns(xlp_series).rename(
-                "S&P Consumer Staples Select Sector (XLP)"
-            )
-            series_list.append(xlp_ret)
-        except Exception:
-            st.warning("XLP data not available for CPG benchmarks.")
-    else:
-        series_list = [lp_ret.rename(index_label), sp_ret.rename(sp_series.name)]
+    series_list = [lp_ret.rename(index_label)]
+
+    if xlp_ret is not None:
+        series_list.append(xlp_ret)
 
     if company_rets:
         series_list.extend(company_rets)
 
     df = pd.concat(series_list, axis=1)
-    if universe == "CPG":
-        df = df.dropna(subset=[index_label])
-    else:
-        df = df.dropna(subset=[index_label, sp_series.name])
+    dropna_subset = [index_label]
+    if xlp_ret is not None:
+        dropna_subset.append("XLP")
+    df = df.dropna(subset=dropna_subset)
 
     fig = go.Figure()
     fig.add_trace(
@@ -475,24 +442,14 @@ def main():
             line=dict(color="#1f77b4"),
         )
     )
-    if universe != "CPG":
+    if "XLP" in df.columns:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df[sp_series.name] * 100.0,
+                y=df["XLP"] * 100.0,
                 mode="lines",
-                name=sp_series.name,
+                name="XLP",
                 line=dict(color="#ff7f0e"),
-            )
-        )
-
-    if universe == "CPG" and "S&P Consumer Staples Select Sector (XLP)" in df.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=df.index,
-                y=df["S&P Consumer Staples Select Sector (XLP)"] * 100.0,
-                mode="lines",
-                name="S&P Consumer Staples Select Sector (XLP)",
             )
         )
 

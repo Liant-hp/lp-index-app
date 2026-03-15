@@ -1,16 +1,16 @@
-# Labels & Packaging (L&P) vs S&P 500
+# Labels & Packaging Index Explorer
 
-This app charts the S&P 500 index (`^GSPC`) versus a custom index called **L&P** (Labels & Packaging), built from a list of public companies.
+This app charts a custom **L&P** (Labels & Packaging) index, built from a list of public companies, with an optional `XLP` benchmark overlay.
 
 ## What you get
 
 - A 1Y-style chart (with range buttons) showing **% change** for:
-  - **S&P 500** (Yahoo Finance ticker `^GSPC`)
   - **L&P** (your custom basket)
+  - **XLP** (optional checkbox overlay for Labels & Packaging)
 
 ## How the L&P index is calculated (S&P-style)
 
-The S&P 500 is a **float-adjusted market-cap weighted index** maintained using a **divisor** so index changes reflect market value changes, not mechanical effects.
+The index is a **float-adjusted market-cap weighted index** maintained using a **divisor** so index changes reflect market value changes, not mechanical effects.
 
 This project implements the same *core* mechanism for a **fixed constituent set**:
 
@@ -51,9 +51,9 @@ The app includes a **reconstitution frequency selector** (Monthly/Quarterly/Annu
 To build your “top 50 Labels & Packaging” basket precisely, please confirm:
 
 1) **Final list of 50 tickers** (and their primary listing). Some names you mentioned (e.g. CCL) may be on non-US exchanges or OTC symbols.
-2) Do you want **price return** (like the common headline S&P 500 index) or **total return**? The app now has a toggle:
+2) Do you want **price return** or **total return**? The app now has a toggle:
   - **Price return** uses `Close` for all series.
-  - **Total return** uses `Adj Close` for L&P and tries `^SP500TR` for the S&P 500 (falls back to `^GSPC` if unavailable).
+  - **Total return** uses `Adj Close` for L&P and `XLP` when selected.
 3) Rebalancing rules:
    - “Top 50” as of what date?
    - How often do you reconstitute/rebalance (monthly/quarterly/annual)?
