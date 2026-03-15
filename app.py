@@ -19,6 +19,7 @@ from lp_index import build_lp_index_levels, compute_normalized_returns, load_con
 APP_TITLE = "Labels & Packaging Index Explorer"
 CONSTITUENTS_CSV = Path(__file__).parent / "data" / "constituents.csv"
 CORRUGATED_CSV = Path(__file__).parent / "data" / "corrugated_constituents.csv"
+XLP_LABEL = "XLP (NYSE Consumer Staples / CPG index)"
 
 
 RANGE_OPTIONS = {
@@ -203,9 +204,8 @@ def main():
     )
 
     show_xlp = st.checkbox(
-        "Add XLP benchmark",
+        f"Add {XLP_LABEL}",
         value=False,
-        disabled=universe != "Labels & Packaging",
     )
 
     reconstitution = st.selectbox(
@@ -301,7 +301,7 @@ def main():
         sp_tickers = ["^SP500TR", "^GSPC"]
 
     extra_tickers = []
-    if universe == "Labels & Packaging" and show_xlp:
+    if show_xlp:
         extra_tickers = ["XLP"]
 
     with st.spinner("Downloading market data..."):
@@ -428,12 +428,12 @@ def main():
     lp_ret = compute_normalized_returns(lp_levels)
 
     xlp_ret = None
-    if universe == "Labels & Packaging" and show_xlp:
+    if show_xlp:
         try:
             xlp_series = _extract_field(prices_raw, ["XLP"], price_field)["XLP"]
-            xlp_ret = compute_normalized_returns(xlp_series).rename("XLP")
+            xlp_ret = compute_normalized_returns(xlp_series).rename(XLP_LABEL)
         except Exception:
-            st.warning("XLP data not available.")
+            st.warning(f"{XLP_LABEL} data not available.")
 
     company_rets = []
     for ticker in company_tickers:
@@ -454,7 +454,7 @@ def main():
     df = pd.concat(series_list, axis=1)
     dropna_subset = [index_label, sp_series.name]
     if xlp_ret is not None:
-        dropna_subset.append("XLP")
+        dropna_subset.append(XLP_LABEL)
     df = df.dropna(subset=dropna_subset)
 
     fig = go.Figure()
@@ -476,13 +476,13 @@ def main():
             line=dict(color="#ff7f0e"),
         )
     )
-    if "XLP" in df.columns:
+    if XLP_LABEL in df.columns:
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["XLP"] * 100.0,
+                y=df[XLP_LABEL] * 100.0,
                 mode="lines",
-                name="XLP",
+                name=XLP_LABEL,
                 line=dict(color="#2ca02c"),
             )
         )
